@@ -3,6 +3,8 @@
 repodir="${PWD}";
 workdir="$(mktemp --dir)";
 
+cp 'src/metadata.json' "${workdir}/metadata.json";
+
 for file in src/*.js
 do
   [[ "${file}" == 'src/banner.js' ]] && continue;
