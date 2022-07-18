@@ -16,7 +16,8 @@ do
     terser \
     "${file}" \
     --compress \
-    --mangle reserved=['imports'] \
+    --mangle reserved=['imports','init'],toplevel \
+    --mangle-props regex='/^(_|DISABLED|ENABLED|Extension|State)/' \
     --format max_line_len=80 \
     >> "$(sed "s/src/$(sed 's/\\/\\\\/g;s/\//\\\//g' <<< "${workdir}")/g" <<< "${file}")";
 done
