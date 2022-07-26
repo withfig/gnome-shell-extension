@@ -1,25 +1,42 @@
 #!/bin/bash
 
-repodir="${PWD}";
-workdir="$(mktemp --dir)";
+nomangle=$( [[ "${@}" == *'--no-mangle'* ]]; echo $(( ! ${?} )) );
+repodir="$( git rev-parse --show-toplevel )";
+workdir="$( mktemp --dir )";
 
-cp 'src/metadata.json' "${workdir}/metadata.json";
+cp "${repodir}/src/metadata.json" "${workdir}/metadata.json";
 
-for file in src/*.js
+for repofile in "${repodir}/src/"*.'js'
 do
-  [[ "${file}" == 'src/banner.js' ]] && continue;
+  [[ "${repofile}" == "${repodir}/src/banner.js" ]] && continue;
 
-  cp 'src/banner.js' "$(sed "s/src/$(sed 's/\\/\\\\/g;s/\//\\\//g' <<< "${workdir}")/g" <<< "${file}")";
+  workfile="$( sed "s/$(
+    sed 's/\\/\\\\/g;s/\//\\\//g' <<< "${repodir}"
+  )\/src/$(
+    sed 's/\\/\\\\/g;s/\//\\\//g' <<< "${workdir}"
+  )/g" <<< "${repofile}" )";
 
-  yarn run \
-    --silent \
-    terser \
-    "${file}" \
-    --compress \
-    --mangle reserved=['imports','init'],toplevel \
-    --mangle-props regex='/^(_|DISABLED|ENABLED|Extension|State)/' \
-    --format max_line_len=80 \
-    >> "$(sed "s/src/$(sed 's/\\/\\\\/g;s/\//\\\//g' <<< "${workdir}")/g" <<< "${file}")";
+  if (( ! ${nomangle} ))
+  then
+    cp "${repodir}/src/banner.js" "${workfile}";
+
+    yarn run \
+      --silent \
+      terser \
+      "${repofile}" \
+      --compress \
+      --define DEBUG=false \
+      --mangle reserved=['imports','init'],toplevel \
+      --mangle-props regex='/^(_|CancellablePromise|Cell|DISABLED|ENABLED|Extension|Item|Queue|State)/' \
+      --format max_line_len=80 \
+      >> "${workfile}";
+  else
+    cp "${repodir}/src/banner.js" "${workfile}";
+
+    printf "const DEBUG=true;" >> "${workfile}";
+    
+    cat "${repofile}" >> "${workfile}";
+  fi
 done
 
 cd "${workdir}";
