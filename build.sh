@@ -27,7 +27,7 @@ do
       --compress \
       --define DEBUG=false \
       --mangle reserved=['imports','init'],toplevel \
-      --mangle-props regex='/^(_|CancellablePromise|Cell|DISABLED|ENABLED|Extension|Item|Queue|State)/' \
+      --mangle-props regex='/^(_|Cell|DISABLED|ENABLED|Extension|Item|Queue|State)/' \
       --format max_line_len=80 \
       >> "${workfile}";
   else
