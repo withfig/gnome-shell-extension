@@ -13,6 +13,7 @@
     "terser": "^5.14.2"
   },
   "scripts": {
-    "build": "node ./build/all.js"
+    "build": "node ./build/all.js",
+    "clean": "rm ./types/.*.d.ts && rm *.zip"
   }
 }

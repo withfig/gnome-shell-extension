@@ -4,16 +4,28 @@ import path from "node:path";
 import { env } from "node:process";
 import { minify } from "terser";
 
-const banner = (async () => await fs.readFile("./src/banner.js", "utf8"))();
+import { Task, TaskSet } from "./tasks.js";
+import { File, Folder, Zip } from "./zip.js";
 
-const tasks = [ ];
+console.log("Bundling extension...");
+
+const banner = (async () => await fs.readFile("./src/banner.js", "utf8"))();
+const tasks = new TaskSet();
+const zip = new Zip();
+
+tasks.add(new Task(async () => {
+  const metadata = await fs.readFile('./src/metadata.json', "utf8");
+  zip.add("metadata.json", new File(metadata));
+}));
 
 for await (const entry of await fs.opendir("./src")) {
   if (entry.isFile()) {
     if (!entry.name.endsWith(".js")) continue;
     if (entry.name == "banner.js") continue;
     
-    tasks.push((async () => {
+    const name = entry.name != "preferences.js" ? entry.name : "prefs.js";
+
+    tasks.add(new Task(async () => {
       switch (env.RELEASE) {
         case "0":
         case "false":
@@ -28,9 +40,7 @@ for await (const entry of await fs.opendir("./src")) {
             return bundled;
           })();
 
-          console.log(bundled);
-
-          // TODO: SAVE FILE TO ZIP
+          zip.add(name, new File(bundled));
         } break;
         default: {
           const source = await fs.readFile(path.join("./src", entry.name), "utf8");
@@ -58,11 +68,15 @@ for await (const entry of await fs.opendir("./src")) {
             return bundled;
           })();
 
-          console.log(bundled);
-
-          // TODO: SAVE FILE TO ZIP
+          zip.add(name, new File(bundled));
         } break;
       }
-    })());
+    }));
   }
 }
+
+await tasks.wait();
+
+await zip.save("./fig-gnome-integration@fig.io.zip");
+
+console.log("Extension bundled!");

@@ -1,17 +1,16 @@
 
-import { Buffer } from "node:buffer";
 import { existsSync as exists } from "node:fs";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
-if (process.env.CI == undefined && !exists("./types/.glib.d.ts")) {
-  console.log("Building types, this will take a moment...");
+import { Task, TaskSet } from "./tasks.js";
 
-  try {
-    await fs.mkdir("./types");
-  } catch { }
+if (process.env.CI == undefined && !exists("./types/.glib.d.ts")) {
+  console.log("Generating types, this will take a moment...");
+
+  try { await fs.mkdir("./types"); } catch { }
 
   // Generate a bunch of typescript headers using this handy tool!
 
@@ -55,7 +54,7 @@ if (process.env.CI == undefined && !exists("./types/.glib.d.ts")) {
   const regexp = /import \* as ([A-Za-z_][A-Za-z_0-9]*) from "([A-Za-z_][A-Za-z_0-9]*)";/g;
 
   // List of spawned tasks -- will be waited on with Promise.all later.
-  const tasks = [ ];
+  const tasks = new TaskSet();
 
   for await (const entry of await fs.opendir("./types")) {
     if (entry.isFile()) {
@@ -63,17 +62,18 @@ if (process.env.CI == undefined && !exists("./types/.glib.d.ts")) {
       if (entry.name == "imports.d.ts") continue;
       if (entry.name == "index.d.ts") continue;
 
-      tasks.push((async () => {
+      tasks.add(new Task(async () => {
         const content = (await fs.readFile(path.join("./types", entry.name), "utf8"))
           .replaceAll(regexp, (_, proper_name, improper_name) => {
-            console.log(proper_name, improper_name);
             return `import * as ${proper_name} from "./.${improper_name}";`;
           });
         await fs.writeFile(path.join("./types", `.${entry.name}`), content, "utf8");
         await fs.rm(path.join("./types", entry.name));
-      })());
+      }));
     }
   }
 
-  await Promise.all(tasks);
+  await tasks.wait();
+
+  console.log("Generated types!");
 }
