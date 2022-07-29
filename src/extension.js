@@ -1,3 +1,7 @@
+/// Yes, this has to be a reference path. for whatever reason, using a jsdoc
+/// comment leaves the destructured members of `imports.gi` as `any`.
+/// <reference path="../types/index.d.ts"/>
+
 const { Gio, GLib } = imports.gi;
 
 const _PREFIX = "Fig GNOME Integration:";

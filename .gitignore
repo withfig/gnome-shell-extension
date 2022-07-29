@@ -1,2 +1,3 @@
 /node_modules
+/types/.*.d.ts
 /fig-gnome-integration@fig.io.zip

@@ -6,7 +6,13 @@
   "repository": "git@github.com/withfig/gnome-shell-extenstion",
   "license": "MIT",
   "private": true,
+  "type": "module",
   "devDependencies": {
+    "@gi.ts/cli": "^1.5.10",
+    "@gi.ts/lib": "^1.5.13",
     "terser": "^5.14.2"
+  },
+  "scripts": {
+    "build": "node ./build/all.js"
   }
 }
