@@ -52,7 +52,7 @@ for await (const entry of await fs.opendir("./src")) {
               },
             },
             mangle: {
-              reserved: [ "imports", "init" ],
+              reserved: [ "Gio", "GLib", "global", "GObject", "imports", "init", "Meta" ],
               toplevel: true,
               properties: /^(_|Item|Queue)/,
             },

@@ -2,7 +2,7 @@
 /// comment leaves the destructured members of `imports.gi` as `any`.
 /// <reference path="../types/index.d.ts"/>
 
-const { Gio, GLib } = imports.gi;
+const { Gio, GLib, GObject, Meta } = imports.gi;
 
 const _PREFIX = "Fig GNOME Integration:";
 
@@ -13,12 +13,12 @@ const _PREFIX = "Fig GNOME Integration:";
  * ### Example
  * 
  * ```js
- * const my_non_cancellable_promise = _sleep(5000).then(() => 123);
+ * const my_non_cancellable_promise = sleep(5000).then(() => 123);
  * 
  * const my_cancellable_promise = (() => {
  *   let cancelled = false;
- *   return _cancellable(
- *     new Promise((resolve) => _sleep(3000).then(() => !cancelled && resolve(456))),
+ *   return cancellable(
+ *     new Promise((resolve) => sleep(3000).then(() => !cancelled && resolve(456))),
  *     () => cancelled = true,
  *   );
  * })();
@@ -42,49 +42,75 @@ const _PREFIX = "Fig GNOME Integration:";
  * @returns {PromiseLike<T> & { promise: PromiseLike<T>, cancel: () => void }}
  * A `PromiseLike<T>` that can be cancelled.
  */
-function _cancellable(promise, cancel) {
+function cancellable(promise, cancel) {
   return Object.freeze(Object.assign(Object.create(null), {
     promise,
     cancel,
 
     then(onresolve, onreject) {
-      return _cancellable(promise.then(onresolve, onreject), cancel);
+      return cancellable(promise.then(onresolve, onreject), cancel);
     },
 
     catch(onreject) {
-      return _cancellable(promise.catch(onreject), cancel);
+      return cancellable(promise.catch(onreject), cancel);
     },
   }));
 }
 
 /**
- * A purely syntatical function that allows you to create a new chain of
- * promises from an optional value.
  * 
- * More or less an alias for `Promise.resolve`.
+ * @template K
+ * @template V
+ * @param {Map<K, V>} map 
+ * @param {K} key 
+ * @param {() => V} or_else
+ * @returns {V} 
+ */
+function map_get_or_else_set(map, key, or_else) {
+  const value = map.get(key) ?? or_else();
+  map.set(key, value);
+  return value;
+}
+
+/**
+ * Returns one or more numbers as strings, with their ordinal suffixes.
  * 
  * ### Example
  * 
  * ```js
- * _chain()
- *   .then(() => _sleep(100))
- *   .then(() => console.log("slept for 100 milliseconds!"));
+ * console.log(ordinal(1, 2, 3, 4, 5)); // logs "[ '1st', '2nd', '3rd', '4th', '5th' ]"
  * ```
  * 
  * @private
  * @function
- * @template T
- * @param {T} value
- * @returns {PromiseLike<T extends undefined ? void : T>}
+ * @template {number|number[]} N
+ * @param {N} numbers The number(s) to format.
+ * @returns {N extends [number, number, ...number[]] ? string[] : string} The formatted number(s).
  */
-function _chain(value) {
-  return Promise.resolve(value);
+ function ordinal(...numbers) {
+  if (numbers.length == 1) {
+    const number = numbers[0];
+
+    const suffixes = {
+      1: "st",
+      2: "nd",
+      3: "rd",
+    };
+
+    if (number % 100 < 20) {
+      return `${number}${suffixes[number % 100]}`;
+    } else {
+      return `${number}${suffixes[number % 10]}`;
+    }
+  } else {
+    return numbers.map(ordinal);
+  }
 }
 
 /**
  * @returns {string} The location of the users Fig socket.
  */
-function _socket_address() {
+function socket_address() {
   return `/var/tmp/fig/${GLib.get_user_name()}/fig.socket`;
 }
 
@@ -97,7 +123,7 @@ function _socket_address() {
  * @param {object} payload The payload of the message.
  * @returns {Uint8Array} The encoded message.
  */
-function _socket_encode(hook, payload) {
+function socket_encode(hook, payload) {
   const header = "\x1b@fig-json\x00\x00\x00\x00\x00\x00\x00\x00";
   const body = JSON.stringify({ hook: { [hook]: payload } });
   
@@ -122,48 +148,13 @@ function _socket_encode(hook, payload) {
  * @returns {PromiseLike<void>} A `PromiseLike<void>` that will resolve after
  * the specified number of milliseconds.
  */
-function _sleep(millis) {
+function sleep(millis) {
   return new Promise((resolve) => {
     GLib.timeout_add(GLib.PRIORITY_LOW, millis, () => {
       resolve();
       return false;
     });
   });
-}
-
-/**
- * Returns one or more numbers as strings, with their ordinal suffixes.
- * 
- * ### Example
- * 
- * ```js
- * console.log([ 1, 2, 3, 4, 5 ]); // logs "[ '1st', '2nd', '3rd', '4th', '5th' ]"
- * ```
- * 
- * @private
- * @function
- * @template {number|number[]} N
- * @param {N} numbers The number(s) to format.
- * @returns {N extends [number, number, ...number[]] ? string[] : string} The formatted number(s).
- */
-function _ordinal(...numbers) {
-  if (numbers.length == 1) {
-    const number = numbers[0];
-
-    const suffixes = {
-      1: "st",
-      2: "nd",
-      3: "rd",
-    };
-
-    if (number % 100 < 20) {
-      return `${number}${suffixes[number % 100]}`;
-    } else {
-      return `${number}${suffixes[number % 10]}`;
-    }
-  } else {
-    return numbers.map(_ordinal);
-  }
 }
 
 /**
@@ -174,7 +165,7 @@ class Queue {
    * A unit of work that can be started by a `Queue`.
    * 
    * If the `Queue.Item` returns a `PromiseLike<any> & CancellableLike` (IE a
-   * value returned from `_cancellable`), then the `Queue` will call the values
+   * value returned from `cancellable`), then the `Queue` will call the values
    * `cancel` method and start the next `Queue.Item` if there are more
    * `Queue.Items` in the `Queue` waiting to be started.
    * 
@@ -183,7 +174,7 @@ class Queue {
    * @property
    * 
    * @see Queue
-   * @see _cancellable
+   * @see cancellable
    */
   static Item = class Item {
     /**
@@ -224,9 +215,9 @@ class Queue {
    * @returns {this} for daisy chaining.
    * @throws {TypeError} if `item` is not not an instance of `Queue.Item`.
    */
-  _push(item) {
+  push(item) {
     if (!(item instanceof Queue.Item)) {
-      throw TypeError(`Expected a ${Queue.name}.${Queue.Item.name}`);
+      throw TypeError(`Expected a Queue.Item`);
     }
 
     this._items._inner.push(item);
@@ -247,7 +238,7 @@ class Queue {
           if ("cancel" in value && "promise" in value) {
             const { promise, cancel } = value;
             
-            if (this._items.length == 0) {
+            if (this._items._inner.length == 0) {
               await Promise.race([
                 promise,
                 new Promise((resolve) => {
@@ -285,16 +276,24 @@ class Queue {
  */
 class Extension {
   constructor() {
+    /** @type {Map<import("../types/.gobject").Object, Set<number>>} */
+    this._connections = new Map();
+    /** @type {import("../types/.gobject").Object|null} */
+    this._cursor = null;
+    /** @type {import("../types/.gio").Socket|null} */
     this._socket = null;
+    /** @type {Queue} */
     this._queue = new Queue();
+    /** @type {import("../types/.gobject").Object|null} */
+    this._window = null;
   }
 
   enable() {
     this._queue
-      ._push(new Queue.Item(() => this._wait_for_socket()
-        .then(() => _sleep(100))
-        .then(() => this._connect_to_socket()))
-        .then(() => this._connect_to_mutter()));
+      .push(new Queue.Item(() => this._wait_for_socket()
+        .then(() => sleep(100))
+        .then(() => this._connect_to_socket())
+        .then(() => this._connect_to_mutter())));
   }
 
   disable() {
@@ -304,18 +303,18 @@ class Extension {
   _wait_for_socket() {
     let finished = false;
 
-    return _cancellable(
+    return cancellable(
       new Promise((resolve) => {
-        const socket_file = Gio.File.new_for_path(_socket_address());
+        const socket_file = Gio.File.new_for_path(socket_address());
     
         GLib.timeout_add(GLib.PRIORITY_LOW, 5000, () => {
           if (finished) return false;
-    
+
           if (socket_file.query_exists(null)) {
             resolve();
             return false;
           }
-    
+
           return true;
         });
       }),
@@ -330,14 +329,14 @@ class Extension {
   // clutter (no pun intended) up the users journal.
   _connect_to_socket() {
     const client = Gio.SocketClient.new();
-    const address = Gio.UnixSocketAddress.new(_socket_address());
+    const address = Gio.UnixSocketAddress.new(socket_address());
 
     const cancel = Gio.Cancellable.new();
 
     let attempts = 0;
     let finished = false;
 
-    return _cancellable(
+    return cancellable(
       new Promise((resolve, reject) => {
         if (!DEBUG) console.log(`${_PREFIX} Connecting to socket...`);
 
@@ -346,7 +345,7 @@ class Extension {
 
           attempts++;
 
-          if (DEBUG) console.log(`${_PREFIX} Connecting to socket (${_ordinal(attempts)} try)...`);
+          if (DEBUG) console.log(`${_PREFIX} Connecting to socket (${ordinal(attempts)} try)...`);
 
           client.connect_async(address, cancel, (client, result) => {
             if (finished) return;
@@ -354,9 +353,9 @@ class Extension {
             try {
               this._socket = client.connect_finish(result).get_socket();
               resolve();
-              console.log(`${_PREFIX} Connected to socket.`);
+              console.log(`${_PREFIX} Connected to socket!`);
             } catch (error) {
-              if (DEBUG) console.log(`${_PREFIX} Encountered an error while connecting to socket (${_ordinal(attempts)} try). Reason: ${error}`);
+              if (DEBUG) console.log(`${_PREFIX} Encountered an error while connecting to socket (${ordinal(attempts)} try). Reason: ${error}`);
 
               switch (error) {
                 case Gio.IOErrorEnum.BUSY:
@@ -380,7 +379,7 @@ class Extension {
       }),
       () => {
         if (finished) return;
-        console.log(`${_PREFIX} Cancelling connection to socket.`);
+        console.log(`${_PREFIX} Cancelling connection to socket...`);
         finished = true;
         cancel.cancel();
       },
@@ -391,6 +390,124 @@ class Extension {
    * 
    */
   _connect_to_mutter() {
+    console.log(`${_PREFIX} Connecting to mutter...`);
+
+    // Get the set of connections associated with the global MetaDisplay object,
+    // or make a set if it doesn't exist already.
+    const global_display_connections = map_get_or_else_set(
+      this._connections,
+      global.display,
+      () => new Set(),
+    );
+
+    // Subscribe to receive updates when the global `MetaDisplay` "focus-window"
+    // property changes.
+    global_display_connections.add(
+      global.display.connect("notify::focus-window", () => {
+        if (this._window != window) {
+          this._disconnect_from_window();
+          this._window = global.display.focus_window;
+          this._connect_to_window();
+        }
+      }),
+    );
+
+    // Subscribe to be notified when a new grab operaption begins.
+    // This is needed because neither GNOME shell or mutter expose a signal that
+    // is fired when a `MetaWindow` is moved. So, 
+    global_display_connections.add(
+      global.display.connect("grab-op-begin", (_, __, grab_op) => {
+        if (grab_op == Meta.GrabOp.MOVING || grab_op == Meta.GrabOp.KEYBOARD_MOVING) {
+          if (window != this._window) {
+            this._disconnect_from_window();
+            this._window = global.display.focus_window;
+            this._connect_to_window();
+          }
+
+          this._cursor = Meta.CursorTracker.get_for_display(global.display);
+          this._connect_to_cursor();
+
+          const global_display_connection = global.display.connect("grab-op-end", () => {
+            global.display.disconnect(global_display_connection);
+            global_display_connections.delete(global_display_connection);
+
+            this._disconnect_from_cursor();
+            this._cursor = null;
+          });
+
+          global_display_connections.add(global_display_connection);
+        }
+      }),
+    );
+
+    console.log(`${_PREFIX} Connected to mutter!`);
+  }
+
+  _connect_to_window() {
+    if (this._window == null) return;
+
+    this._send_window_data();
+    
+    const window_connections = map_get_or_else_set(
+      this._connections,
+      this._window,
+      () => new Set(),
+    );
+    
+    window_connections.add(
+      this._window.connect("size-changed", () => this._send_window_data()),
+    );
+  }
+
+  _connect_to_cursor() {
+    if (this._cursor == null) return;
+
+    const cursor_connections = map_get_or_else_set(
+      this._connections,
+      this._cursor,
+      () => new Set(),
+    );
+
+    cursor_connections.add(
+      this._cursor.connect("position-invalidated", () => this._send_window_data()),
+    );
+  }
+
+  _disconnect_from_window() {
+    const window_connections = this._connections.get(this._window);
+
+    if (window_connections != null) {
+      for (const window_connection of window_connections) {
+        this._window.disconnect(window_connection);
+      }
+
+      this._connections.delete(this._window);
+    }
+  }
+
+  _disconnect_from_cursor() {
+    const cursor_connections = this._connections.get(this._cursor);
+  
+    if (cursor_connections != null) {
+      for (const cursor_connection of cursor_connections) {
+        this._cursor.disconnect(cursor_connection);
+      }
+
+      this._connections.delete(this._cursor);
+    }
+  }
+
+  _send_window_data() {
+    const wm_class = this._window.get_wm_class();
+    const frame_rect = this._window.get_frame_rect();
+
+    this._socket.send(socket_encode("focusedWindowData", {
+      "id": wm_class,
+      "x": frame_rect.x,
+      "y": frame_rect.y,
+      "width": frame_rect.width,
+      "height": frame_rect.height,
+    }), null);
   }
 }
 
