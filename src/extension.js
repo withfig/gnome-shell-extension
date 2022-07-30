@@ -414,7 +414,10 @@ class Extension {
 
     // Subscribe to be notified when a new grab operaption begins.
     // This is needed because neither GNOME shell or mutter expose a signal that
-    // is fired when a `MetaWindow` is moved. So, 
+    // is fired when a `MetaWindow` is moved. So, the solution is to subscribe
+    // to the display when a grab operation starts; AKA when the user starts
+    // moving around a window, and then updating the window data whenever the
+    // cursor moves until the grab operation ends.
     global_display_connections.add(
       global.display.connect("grab-op-begin", (_, __, grab_op) => {
         if (grab_op == Meta.GrabOp.MOVING || grab_op == Meta.GrabOp.KEYBOARD_MOVING) {
