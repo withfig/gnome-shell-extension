@@ -353,8 +353,7 @@ class Extension {
    */
   enable() {
     this.#queue
-      .push(new Queue.Item(() => this.#wait_for_socket()
-        .then(() => sleep(100))
+      .push(new Queue.Item(() => sleep(100)
         .then(() => this.#connect_to_socket())
         .then(() => this.#connect_to_mutter())));
   }
@@ -373,33 +372,6 @@ class Extension {
         .then(() => this.#disconnect_from_window())
         .then(() => this.#disconnect_from_mutter())
         .then(() => this.#disconnect_from_socket())));
-  }
-
-  /**
-   * Repeatedly checks to see if the Fig socket exists every five seconds.
-   * 
-   * @returns {Promise<void> & { cancel: () => void, promise: Promise<void> }}
-   */
-  #wait_for_socket() {
-    let finished = false;
-
-    return cancellable(
-      new Promise((resolve) => {
-        const socket_file = Gio.File.new_for_path(socket_address());
-    
-        GLib.timeout_add(GLib.PRIORITY_LOW, 5000, () => {
-          if (finished) return false;
-
-          if (socket_file.query_exists(null)) {
-            resolve();
-            return false;
-          }
-
-          return true;
-        });
-      }),
-      () => finished = true,
-    );
   }
 
   /**
