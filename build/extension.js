@@ -50,11 +50,20 @@ for await (const entry of await fs.opendir("./src")) {
               global_defs: {
                 DEBUG: false,
               },
-            },
-            mangle: {
-              reserved: [ "Gio", "GLib", "global", "GObject", "imports", "init", "Meta" ],
+              pure_getters: true,
+              top_retain: "init",
               toplevel: true,
-              properties: /^(_|Item|Queue)/,
+            },
+            ecma: 2020,
+            mangle: {
+              reserved: [
+                "disable",
+                "enable",
+                "global",
+                "imports",
+                "init",
+              ],
+              toplevel: true,
             },
             format: {
               max_line_len: 80,
