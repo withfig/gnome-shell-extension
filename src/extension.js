@@ -301,6 +301,8 @@ class Extension extends GObject.Object {
           this.#window,
           "size-changed",
           () => this.#send_window_data());
+
+        this.#send_window_data();
       }
     });
 
@@ -670,9 +672,6 @@ class Queue {
   /**
    * Pushes an `item` to the queue.
    * 
-   * If the queue **is already running**, it will attempt to cancel the
-   * currently running `Queue.Item`, if possible.
-   * 
    * If the queue **is not already running**, it will quietly start the queue
    * in the background and begin running its items.
    * 
@@ -706,15 +705,7 @@ class Queue {
             const { promise, cancel } = value;
             
             if (this.#items.length == 0) {
-              await Promise.race([
-                promise,
-                new Promise((resolve) => {
-                  this.#on_item_push = () => {
-                    cancel().then(() => resolve());
-                    this.#on_item_push = () => {};
-                  };
-                })
-              ]);
+              await promise
 
               this.#on_item_push = () => {};
             } else {

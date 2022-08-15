@@ -2,22 +2,10 @@
 
 const { GLib } = imports.gi;
 
-{
-  const { then: old_then, catch: old_catch, finally: old_finally } = Promise.prototype;
-  Promise.prototype.then = function then(on_resolve, on_reject) {
-    if ("cancel" in this) {
-      const old_cancel = this.cancel;
-
-      
-    } else {
-      return old_then.call(this, on_resolve, on_reject);
-    }
-  };
-}
-
 const LOG_PREFIX = "Fig GNOME Integration:";
 
-const RESOURCES_PREFIX = "resource:///org/gnome/shell/extensions/fig-gnome-integration";
+const RESOURCES_PREFIX =
+  "resource:///org/gnome/shell/extensions/fig-gnome-integration";
 
 /**
  * @param {any[]} messages
@@ -48,7 +36,7 @@ function resource(...resources) {
 
 /**
  * Returns the location of the Fig socket.
- * 
+ *
  * @private
  * @function
  * @returns {string} The location of the Fig socket.
@@ -59,7 +47,7 @@ function socket_address() {
 
 /**
  * Converts a message to the format that the Fig socket expects.
- * 
+ *
  * @private
  * @function
  * @param {string} hook The hook that the payload is for.
@@ -69,7 +57,7 @@ function socket_address() {
 function socket_encode(hook, payload) {
   const header = "\x1b@fig-json\x00\x00\x00\x00\x00\x00\x00\x00";
   const body = JSON.stringify({ hook: { [hook]: payload } });
-  
+
   const message = new TextEncoder().encode(header + body);
 
   // I'd use a Uint32Array pointing to the same buffer to do this, but the
