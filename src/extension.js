@@ -306,6 +306,11 @@ class Extension extends GObject.Object {
       }
     });
 
+    // Subscribe to receive updates when the overlay key is pressed
+    this.#connect_to_object(global.display, "overlay-key", () => {
+      this.#send_window_data(true);
+    });
+
     // Subscribe to be notified when a new grab operaption begins.
     // This is needed because neither GNOME shell or mutter expose a signal that
     // is fired when a `MetaWindow` is moved. So, the solution is to subscribe
@@ -511,17 +516,19 @@ class Extension extends GObject.Object {
     }
   }
 
-  #send_window_data() {
+  #send_window_data(overlay_pressed) {
     const wm_class = this.#window.get_wm_class();
     const frame_rect = this.#window.get_frame_rect();
 
     try {
       this.#socket.send(socket_encode("focusedWindowData", {
+        "source": "gse",
         "id": wm_class,
         "x": frame_rect.x,
         "y": frame_rect.y,
         "width": frame_rect.width,
         "height": frame_rect.height,
+        "hide": overlay_pressed,
       }), null);
     } catch (error) {
       log("Failed to send a message to the socket, disconnecting.");
