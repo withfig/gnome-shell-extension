@@ -2,9 +2,14 @@
 /// comment leaves the destructured members of `imports.gi` as `any`.
 /// <reference path="../types/index.d.ts"/>
 
-const { Gio, GLib, GObject, Meta } = imports.gi;
+const { Clutter, Gio, GLib, GObject, Meta, St } = imports.gi;
 
-const _PREFIX = "Fig GNOME Integration:";
+const ExtensionUtils = imports.misc.extensionUtils;
+const Main = imports.ui.main;
+const PanelMenu = imports.ui.panelMenu;
+
+const Me = ExtensionUtils.getCurrentExtension();
+const { log, resource, socket_address, socket_encode } = Me.imports.common;
 
 /**
  * Creates a `PromiseLike<T>` that can be cancelled by calling its `cancel`
@@ -59,46 +64,6 @@ function cancellable(promise, cancel) {
 }
 
 /**
- * Attempts to get the `V` associated with `key` from the `map`, returning the
- * 
- * If the `key` is not present in the `map`, then `or_else` is called, and its
- * return value is used to set `key` in the map, and is returned.
- * 
- * ### Examples
- * 
- * ```js
- * const my_map = new Map();
- * 
- * const my_first_value = map_get_or_else_set(my_map, "foo", () => new Set());
- * 
- * console.log(my_first_value.size); // logs 0
- * 
- * my_first_value.add(123);
- * 
- * const my_second_value = map_get_or_else_set(my_map, "foo", () => new Set());
- * 
- * console.log(my_second_value.has(123)); // logs true
- * console.log(my_first_value == my_second_value); // logs true
- * 
- * const my_third_value = map_get_or_else_set(my_map, "bar", () => new Set());
- * 
- * console.log(my_second_value == my_third_value); // logs false
- * ```
- * 
- * @template K
- * @template V
- * @param {Map<K, V>} map 
- * @param {K} key 
- * @param {() => V} or_else
- * @returns {V} 
- */
-function map_get_or_else_set(map, key, or_else) {
-  const value = map.get(key) ?? or_else();
-  map.set(key, value);
-  return value;
-}
-
-/**
  * Returns one or more numbers as strings, with their ordinal suffixes.
  * 
  * ### Example
@@ -113,7 +78,7 @@ function map_get_or_else_set(map, key, or_else) {
  * @param {N} numbers The number(s) to format.
  * @returns {N extends [number, number, ...number[]] ? string[] : string} The formatted number(s).
  */
- function ordinal(...numbers) {
+function ordinal(...numbers) {
   if (numbers.length == 1) {
     const number = numbers[0];
 
@@ -134,44 +99,6 @@ function map_get_or_else_set(map, key, or_else) {
 }
 
 /**
- * Returns the location of the Fig socket.
- * 
- * @private
- * @function
- * @returns {string} The location of the Fig socket.
- */
-function socket_address() {
-  return `/var/tmp/fig/${GLib.get_user_name()}/fig.socket`;
-}
-
-/**
- * Converts a message to the format that the Fig socket expects.
- * 
- * @private
- * @function
- * @param {string} hook The hook that the payload is for.
- * @param {object} payload The payload of the message.
- * @returns {Uint8Array} The converted message.
- */
-function socket_encode(hook, payload) {
-  const header = "\x1b@fig-json\x00\x00\x00\x00\x00\x00\x00\x00";
-  const body = JSON.stringify({ hook: { [hook]: payload } });
-  
-  const message = new TextEncoder().encode(header + body);
-
-  // I'd use a Uint32Array pointing to the same buffer to do this, but the
-  // length part of the header is misaligned by two bytes...
-  let length = body.length << 0;
-  for (let i = 0; i < 4; i++) {
-    const byte = length & 0xff;
-    message[header.length - i - 1] = byte;
-    length = (length - byte) / 256;
-  }
-
-  return message;
-}
-
-/**
  * Returns a promise that will resolve after roughly the specified amount of
  * milliseconds.
  * 
@@ -181,12 +108,503 @@ function socket_encode(hook, payload) {
  * @returns {PromiseLike<void>}
  */
 function sleep(millis) {
-  return new Promise((resolve) => {
-    GLib.timeout_add(GLib.PRIORITY_LOW, millis, () => {
-      resolve();
-      return false;
+  let cancelled = false;
+  return cancellable(
+    new Promise((resolve) => {
+      GLib.timeout_add(GLib.PRIORITY_LOW, millis, () => {
+        if (!cancelled) resolve();
+        return false;
+      });
+    }),
+    () => cancelled = true,
+  );
+}
+
+/**
+ * The main class for managing the extensions state.
+ */
+class Extension extends GObject.Object {
+  /** @public @property @type {boolean} */
+  get connected() { return this.#connected; }
+
+  /** @private @property @type {boolean} */
+  #connected;
+  /** @private @property @type {import("../types/.gobject").Binding|null} */
+  #connected_binding;
+  /** @private @property @type {boolean} */
+  #connecting;
+  /** @private @property @type {Map<import("../types/.gobject").Object, Set<number>>} */
+  #connections;
+  /** @private @property @type {boolean} */
+  #disconnecting;
+  /** @private @property @type {PanelIcon|null} */
+  #panel_icon;
+  /** @private @property @type {import("../types/.gio").Resource|null} */
+  #resources;
+  /** @private @property @type {import("../types/.gio").Settings|null} */
+  #settings;
+  /** @private @property @type {import("../types/.gio").Socket|null} */
+  #socket;
+  /** @private @property @type {Queue} */
+  #queue;
+  /** @private @property @type {import("../types/.gobject").Object|null} */
+  #window;
+
+  /**
+   * Initializes the extension, without enabling it.
+   * 
+   * @public @constructor
+   */
+  _init() {
+    super._init();
+
+    this.#connected = false;
+    this.#connected_binding = null;
+    this.#connecting = false;
+    this.#connections = new Map();
+    this.#disconnecting = false;
+    this.#panel_icon = null;
+    this.#resources = null;
+    this.#settings = null;
+    this.#socket = null;
+    this.#queue = new Queue();
+    this.#window = null;
+  }
+
+  /**
+   * Enables the extension, starting to connect to the Fig socket and mutter
+   * quietly in the background.
+   * 
+   * @public @method @returns {void}
+   */
+  enable() {
+    // Load and register resource files.
+    this.#resources = Gio.Resource.load(`${Me.path}/resources/fig-gnome-integration.gresource`);
+    Gio.resources_register(this.#resources);
+
+    // Get the settings object.
+    this.#settings = ExtensionUtils.getSettings();
+
+    // Watch for the user changing the "show-panel-icon" preference.
+    this.#connect_to_object(this.#settings, "changed::show-panel-icon", () => {
+      if (this.#settings.get_boolean("show-panel-icon")) {
+        // If the panel icon doesn't exist, create it and bind the connected
+        // property, then add it to the panel.
+        if (this.#panel_icon == null) {
+          this.#panel_icon = new PanelIcon({
+            connected: this.#connected,
+          });
+          this.#connected_binding = this.bind_property(
+            "connected",
+            this.#panel_icon,
+            "connected",
+            GObject.BindingFlags.DEFAULT);
+        }
+        Main.panel.addToStatusArea("Fig", this.#panel_icon, 0, "right");
+      } else {
+        // If the panel icon exists, destroy it.
+        if (this.#panel_icon != null) {
+          this.#connected_binding.unbind();
+          this.#connected_binding = null;
+          this.#panel_icon.destroy();
+          this.#panel_icon = null;
+        }
+      }
     });
-  });
+
+    if (this.#settings.get_boolean("show-panel-icon")) {
+      this.#panel_icon = new PanelIcon({
+        connected: this.#connected,
+      });
+      this.#connected_binding = this.bind_property(
+        "connected",
+        this.#panel_icon,
+        "connected",
+        GObject.BindingFlags.DEFAULT);
+      Main.panel.addToStatusArea("Fig", this.#panel_icon, 0, "right");
+    }
+
+    this.#connect();
+  }
+
+  /**
+   * Disables the extension. Note that this waits for the extension to finish
+   * becoming enabled if it is in the process of doing so. This prevents the
+   * extension from crashing if the user spams the extension enable/disable
+   * switch.
+   * 
+   * @public @method @returns {void}
+   */
+  disable() {
+    // Unregister the resource files.
+    Gio.resources_unregister(this.#resources);
+    this.#resources = null;
+
+    // Disconnect from and delete the settings object.
+    this.#disconnect_from_object(this.#settings);
+    this.#settings = null;
+
+    // If the panel icon exists, destroy it.
+    if (this.#panel_icon != null) {
+      this.#connected_binding.unbind();
+      this.#connected_binding = null;
+      this.#panel_icon.destroy();
+      this.#panel_icon = null;
+    }
+
+    this.#disconnect();
+  }
+
+  /**
+   * 
+   */
+  #connect() {
+    if (this.#connecting) return;
+
+    this.#connecting = true;
+    this.#disconnecting = false;
+
+    this.#queue
+      .push(new Queue.Item(() => sleep(100)
+        .then(() => this.#connect_to_socket())
+        .then(() => this.#connect_to_mutter())
+        .then(() => this.#connecting = false)));
+  }
+
+  /**
+   * Connects to all of the signals that this extension uses from mutter.
+   * 
+   * The connection ids are stored in a map so that they may be disconnected
+   * later to ensure garbage collection.
+   * 
+   * @returns {void}
+   */
+  #connect_to_mutter() {
+    log("Connecting to mutter...");
+
+    this.#window = global.display.focus_window;
+
+    this.#connect_to_object(
+      this.#window,
+      "size-changed",
+      () => this.#send_window_data());
+
+    // Subscribe to receive updates when the global `MetaDisplay` "focus-window"
+    // property changes.
+    this.#connect_to_object(global.display, "notify::focus-window", () => {
+      if (this.#window != window) {
+        this.#disconnect_from_object(this.#window);
+
+        this.#window = global.display.focus_window;
+
+        this.#connect_to_object(
+          this.#window,
+          "size-changed",
+          () => this.#send_window_data());
+      }
+    });
+
+    // Subscribe to be notified when a new grab operaption begins.
+    // This is needed because neither GNOME shell or mutter expose a signal that
+    // is fired when a `MetaWindow` is moved. So, the solution is to subscribe
+    // to the display when a grab operation starts; AKA when the user starts
+    // moving around a window, and then updating the window data whenever the
+    // cursor moves until the grab operation ends.
+    this.#connect_to_object(global.display, "grab-op-begin", (_, __, grab_op) => {
+      if (grab_op == Meta.GrabOp.MOVING || grab_op == Meta.GrabOp.KEYBOARD_MOVING) {
+        if (window != this.#window) {
+          this.#disconnect_from_object(this.#window);
+          
+          this.#window = global.display.focus_window;
+
+          this.#connect_to_object(
+            this.#window,
+            "size-changed",
+            () => this.#send_window_data());
+        }
+
+        this.#send_window_data();
+
+        const cursor = Meta.CursorTracker.get_for_display(global.display);
+        const cursor_connection = this.#connect_to_object(
+          cursor,
+          "position-invalidated",
+          () => this.#send_window_data());
+
+        const display_connection = this.#connect_to_object(global.display, "grab-op-end", () => {
+          this.#disconnect_from_object(global.display, display_connection);
+          this.#disconnect_from_object(cursor, cursor_connection);
+        });
+      }
+    });
+
+    log("Connected to mutter!");
+
+    return Promise.resolve();
+  }
+
+  /**
+   * Connects to `signal` on `object`, storing a relation between the two so
+   * that it can be disconnected automatically if the extension is disabled.
+   * 
+   * @param {import("../types/.gobject").Object} object 
+   * @param {string} signal 
+   * @param {() => void} handler
+   * @returns {number}
+   */
+  #connect_to_object(object, signal, handler) {
+    if (object == null) return;
+    const connections = this.#connections.get(object) ?? new Set();
+    const connection = object.connect(signal, handler);
+    connections.add(connection);
+    this.#connections.set(object, connections);
+    return connection;
+  }
+
+  /**
+   * Repeatedly tries to connect to the Fig socket, ignoring errors, until it
+   * either successfully connects or is cancelled. In debug mode, the errors are
+   * also logged to the console.
+   * 
+   * The method starts off with trying to connect once every two and a half
+   * seconds, moving to five seconds after three attempts, and then moving to
+   * ten seconds after nine attempts. This is done to avoid using too much CPU
+   * when Fig isn't running.
+   * 
+   * @returns {Promise<void> & { cancel: () => void, promise: Promise<void> }}
+   */
+  #connect_to_socket() {
+    const client = Gio.SocketClient.new();
+    const address = Gio.UnixSocketAddress.new(socket_address());
+
+    const cancel = Gio.Cancellable.new();
+
+    let attempts = 0;
+    let finished = false;
+
+    return cancellable(
+      new Promise((resolve) => {
+        if (!DEBUG) log("Connecting to socket...");
+
+        const attempt = () => {
+          if (finished) return;
+
+          attempts++;
+
+          if (DEBUG) log(`Connecting to socket (${ordinal(attempts)} try)...`);
+
+          client.connect_async(address, cancel, (client, result) => {
+            if (finished) return;
+
+            try {
+              this.#socket = client.connect_finish(result).get_socket();
+
+              this.#connected = true;
+              this.notify("connected");
+
+              resolve();
+
+              log(`Connected to socket!`);
+            } catch (error) {
+              if (DEBUG) log(`Encountered an error while connecting to socket (${ordinal(attempts)} try). Reason: ${error}`);
+
+              const timeout = attempts < 3 ? 2500 : attempts < 9 ? 5000 : 10000;
+
+              GLib.timeout_add(GLib.PRIORITY_LOW, timeout, () => {
+                attempt();
+                return false;
+              });
+            }
+          });
+        };
+
+        attempt();
+      }),
+      () => {
+        if (finished) return;
+        log("Cancelling connection to socket...");
+        finished = true;
+        cancel.cancel();
+      },
+    );
+  }
+
+  #disconnect() {
+    if (this.#disconnecting) return;
+
+    this.#disconnecting = true;
+    this.#connecting = false;
+
+    this.#queue
+      .push(new Queue.Item(() => sleep(100)
+        .then(() => this.#disconnect_from_objects())
+        .then(() => this.#disconnect_from_socket())
+        .then(() => this.#disconnecting = false)));
+  }
+
+  /**
+   * @param {import("../types/.gobject").Object} object 
+   * @param {number?} connection
+   * @returns {boolean}
+   */
+  #disconnect_from_object(object, connection) {
+    if (object == null) return;
+
+    const connections = this.#connections.get(object) ?? new Set();
+
+    if (connection != null) {
+      object.disconnect(connection);
+
+      const removed = connections.delete(connection);
+      
+      // We're not adding connections, so the only change in size could be
+      // negative. As such, we only need to check if the set is now empty and
+      // delete it if it is to ensure garbage collection.
+      if (connections.size == 0) this.#connections.delete(object);
+    
+      return removed;
+    } else {
+      for (const connection of connections) object.disconnect(connection);
+      return this.#connections.delete(object);
+    }
+  }
+
+  #disconnect_from_objects() {
+    try {
+      log("Disconnecting from objects...");
+
+      this.#window = null;
+
+      for (const [object, connections] of this.#connections) {
+        for (const connection of connections) object.disconnect(connection);
+        connections.clear();
+      }
+      this.#connections.clear();
+
+      log("Disconnected from objects.");
+
+      return Promise.resolve();
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+
+  #disconnect_from_socket() {
+    try {
+      if (this.#socket == null) return Promise.resolve();
+
+      log("Disconnecting from socket...");
+
+      this.#socket.close();
+      this.#socket = null;
+
+      this.#connected = false;
+      this.notify("connected");
+
+      log("Disconnected from socket.");
+
+      return Promise.resolve();
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+
+  #send_window_data() {
+    const wm_class = this.#window.get_wm_class();
+    const frame_rect = this.#window.get_frame_rect();
+
+    try {
+      this.#socket.send(socket_encode("focusedWindowData", {
+        "id": wm_class,
+        "x": frame_rect.x,
+        "y": frame_rect.y,
+        "width": frame_rect.width,
+        "height": frame_rect.height,
+      }), null);
+    } catch (error) {
+      log("Failed to send a message to the socket, disconnecting.");
+
+      this.#disconnect();
+      this.#connect();
+    }
+  }
+}
+
+/** @public @class PanelIcon */
+class PanelIcon extends PanelMenu.Button {
+  /** @public @property @type {boolean} */
+  get connected() {
+    return this.#connected;
+  }
+
+  /** @public @property @type {boolean} */
+  set connected(value) {
+    this.#connected = value;
+    this.notify("connected");
+  }
+
+  /** @private @property @type {boolean} */
+  #connected;
+  /** @private @property @type {number} */
+  #connection;
+  /** @private @property @type {import("../types/.st").Icon} */
+  #icon;
+  /** @private @property @type {import("../types/.gio").Icon} */
+  #icon_connected;
+  /** @private @property @type {import("../types/.gio").Icon} */
+  #icon_disconnected;
+
+  /** @override @method @returns {void} */
+  _init({ connected }) {
+    super._init(0.0, null, true);
+
+    this.#connected = connected;
+
+    const [ icon_connected, icon_disconnected ] = resource(
+      "icons/scalable/actions/fig-connected-symbolic.svg",
+      "icons/scalable/actions/fig-disconnected-symbolic.svg"); 
+    
+    this.#icon_connected = Gio.Icon.new_for_string(icon_connected);
+    this.#icon_disconnected = Gio.Icon.new_for_string(icon_disconnected);
+
+    this.#icon = new St.Icon({
+      gicon: this.#connected
+        ? this.#icon_connected
+        : this.#icon_disconnected,
+      style_class: "system-status-icon",
+      reactive: true,
+      track_hover: true,
+    });
+
+    this.add_child(this.#icon);
+
+    this.#connection = this.connect("notify::connected", () => {
+      this.#icon.gicon = this.#connected
+        ? this.#icon_connected
+        : this.#icon_disconnected;
+    });
+  }
+
+  /** @override @method @returns {void} */
+  vfunc_finalize() {
+    this.disconnect(this.#connection);
+
+    delete this.#connected;
+    delete this.#icon;
+    delete this.#icon_connected;
+    delete this.#icon_disconnected;
+
+    super.vfunc_finalize();
+  }
+  
+  /** @override @method @param {import("../types/.clutter").Event} event @returns {boolean} */
+  vfunc_event(event) {
+    if (this.menu && event.type() == Clutter.EventType.BUTTON_PRESS) {
+      
+    }
+
+    return Clutter.EVENT_PROPAGATE;
+  }
 }
 
 /**
@@ -226,9 +644,16 @@ class Queue {
      * item is started.
      */
     constructor(entry, ...args) {
-      this._entry = () => entry(...args);
+      this._ = () => entry(...args);
     }
   };
+
+  /** @private @property @type {Queue.Item[]} */
+  #items;
+  /** @private @property @type {() => void} */
+  #on_item_push;
+  /** @private @property @type {boolean} */
+  #running;
   
   /**
    * Creates a new empty queue without starting it.
@@ -237,13 +662,9 @@ class Queue {
    * @constructor
    */
   constructor() {
-    /** @type {{ _inner: Queue.Item[], _onpush: () => void }} */
-    this._items = {
-      _inner: [ ],
-      _onpush: () => {},
-    };
-    /** @type {boolean} */
-    this._running = false;
+    this.#items = [ ];
+    this.#on_item_push = () => {};
+    this.#running = false;
   }
 
   /**
@@ -266,383 +687,53 @@ class Queue {
       throw TypeError(`Expected a Queue.Item`);
     }
 
-    this._items._inner.push(item);
+    this.#items.push(item);
     
-    if (this._running) {
-      this._items._onpush();
+    if (this.#running) {
+      this.#on_item_push();
       return this;
     }
 
     (async () => {
-      this._running = true;
+      this.#running = true;
 
-      let item = this._items._inner.shift();
+      let item = this.#items.shift();
       while (!!item) {
         try {
-          const value = item._entry();
+          const value = item._();
 
           if ("cancel" in value && "promise" in value) {
             const { promise, cancel } = value;
             
-            if (this._items._inner.length == 0) {
+            if (this.#items.length == 0) {
               await Promise.race([
                 promise,
                 new Promise((resolve) => {
-                  this._items._onpush = () => {
-                    cancel();
-                    resolve();
-                    this._items._onpush = () => {};
+                  this.#on_item_push = () => {
+                    cancel().then(() => resolve());
+                    this.#on_item_push = () => {};
                   };
                 })
               ]);
 
-              this._items._onpush = () => {};
+              this.#on_item_push = () => {};
             } else {
-              cancel();
+              await cancel();
             }
           } else if (value instanceof Promise) {
             await value;
           }
         } catch (error) {
-          console.log(`${_PREFIX} Uncaught error in Queue: ${error}`);
+          log(`Uncaught error in Queue: ${error}`);
         }
 
-        item = this._items._inner.shift();
+        item = this.#items.shift();
       }
 
-      this._running = false;
+      this.#running = false;
     })()
 
     return this;
-  }
-}
-
-/**
- * The main class for managing the extensions state.
- */
-class Extension {
-  /** @private @property @type {Map<import("../types/.gobject").Object, Set<number>>} */
-  #connections;
-  /** @private @property @type {import("../types/.gobject").Object|null} */
-  #cursor;
-  /** @private @property @type {import("../types/.gio").Socket|null} */
-  #socket;
-  /** @private @property @type {Queue} */
-  #queue;
-  /** @private @property @type {import("../types/.gobject").Object|null} */
-  #window;
-
-  /**
-   * Initializes the extension, without enabling it.
-   * 
-   * @public @constructor
-   */
-  constructor() {
-    this.#connections = new Map();
-    this.#cursor = null;
-    this.#socket = null;
-    this.#queue = new Queue();
-    this.#window = null;
-  }
-
-  /**
-   * Enables the extension, starting to connect to the Fig socket and mutter
-   * quietly in the background.
-   * 
-   * @public @method @returns {void}
-   */
-  enable() {
-    this.#queue
-      .push(new Queue.Item(() => sleep(100)
-        .then(() => this.#connect_to_socket())
-        .then(() => this.#connect_to_mutter())));
-  }
-
-  /**
-   * Disables the extension. Note that this waits for the extension to finish
-   * becoming enabled if it is in the process of doing so. This prevents the
-   * extension from crashing if the user spams the extension enable/disable
-   * switch.
-   * 
-   * @public @method @returns {void}
-   */
-  disable() {
-    this.#queue
-      .push(new Queue.Item(() => this.#disconnect_from_cursor()
-        .then(() => this.#disconnect_from_window())
-        .then(() => this.#disconnect_from_mutter())
-        .then(() => this.#disconnect_from_socket())));
-  }
-
-  /**
-   * Repeatedly tries to connect to the Fig socket, ignoring errors, until it
-   * either successfully connects or is cancelled. In debug mode, the errors are
-   * also logged to the console.
-   * 
-   * The method starts off with trying to connect once every two and a half
-   * seconds, moving to five seconds after three attempts, and then moving to
-   * ten seconds after nine attempts. This is done to avoid using too much CPU
-   * when Fig isn't running.
-   * 
-   * @returns {Promise<void> & { cancel: () => void, promise: Promise<void> }}
-   */
-  #connect_to_socket() {
-    const client = Gio.SocketClient.new();
-    const address = Gio.UnixSocketAddress.new(socket_address());
-
-    const cancel = Gio.Cancellable.new();
-
-    let attempts = 0;
-    let finished = false;
-
-    return cancellable(
-      new Promise((resolve) => {
-        if (!DEBUG) console.log(`${_PREFIX} Connecting to socket...`);
-
-        const attempt = () => {
-          if (finished) return;
-
-          attempts++;
-
-          if (DEBUG) console.log(`${_PREFIX} Connecting to socket (${ordinal(attempts)} try)...`);
-
-          client.connect_async(address, cancel, (client, result) => {
-            if (finished) return;
-
-            try {
-              this.#socket = client.connect_finish(result).get_socket();
-              this.#socket.set_blocking(false);
-
-              resolve();
-
-              console.log(`${_PREFIX} Connected to socket!`);
-            } catch (error) {
-              if (DEBUG) console.log(`${_PREFIX} Encountered an error while connecting to socket (${ordinal(attempts)} try). Reason: ${error}`);
-
-              const timeout = attempts < 3 ? 2500 : attempts < 9 ? 5000 : 10000;
-
-              GLib.timeout_add(GLib.PRIORITY_LOW, timeout, () => {
-                attempt();
-                return false;
-              });
-            }
-          });
-        };
-
-        attempt();
-      }),
-      () => {
-        if (finished) return;
-        console.log(`${_PREFIX} Cancelling connection to socket...`);
-        finished = true;
-        cancel.cancel();
-      },
-    );
-  }
-
-  /**
-   * Connects to all of the signals that this extension uses from mutter.
-   * 
-   * The connection ids are stored in a map so that they may be disconnected
-   * later to ensure garbage collection.
-   * 
-   * @returns {void}
-   */
-  #connect_to_mutter() {
-    console.log(`${_PREFIX} Connecting to mutter...`);
-
-    // Get the set of connections associated with the global MetaDisplay object,
-    // or make a set if it doesn't exist already.
-    const global_display_connections = map_get_or_else_set(
-      this.#connections,
-      global.display,
-      () => new Set(),
-    );
-
-    // Subscribe to receive updates when the global `MetaDisplay` "focus-window"
-    // property changes.
-    global_display_connections.add(
-      global.display.connect("notify::focus-window", () => {
-        if (this.#window != window) {
-          this.#disconnect_from_window();
-          this.#window = global.display.focus_window;
-          this.#connect_to_window();
-        }
-      }),
-    );
-
-    // Subscribe to be notified when a new grab operaption begins.
-    // This is needed because neither GNOME shell or mutter expose a signal that
-    // is fired when a `MetaWindow` is moved. So, the solution is to subscribe
-    // to the display when a grab operation starts; AKA when the user starts
-    // moving around a window, and then updating the window data whenever the
-    // cursor moves until the grab operation ends.
-    global_display_connections.add(
-      global.display.connect("grab-op-begin", (_, __, grab_op) => {
-        if (grab_op == Meta.GrabOp.MOVING || grab_op == Meta.GrabOp.KEYBOARD_MOVING) {
-          if (window != this.#window) {
-            this.#disconnect_from_window();
-            this.#window = global.display.focus_window;
-            this.#connect_to_window();
-          }
-
-          this.#cursor = Meta.CursorTracker.get_for_display(global.display);
-          this.#connect_to_cursor();
-
-          const global_display_connection = global.display.connect("grab-op-end", () => {
-            global.display.disconnect(global_display_connection);
-            global_display_connections.delete(global_display_connection);
-
-            this.#disconnect_from_cursor();
-            this.#cursor = null;
-          });
-
-          global_display_connections.add(global_display_connection);
-        }
-      }),
-    );
-
-    console.log(`${_PREFIX} Connected to mutter!`);
-  }
-
-  /**
-   * Connects to the currently focused windows resize signals.
-   * 
-   * If there is not currently a focused window, this method early-exits.
-   * 
-   * The connection ids are stored in a map so that they may be disconnected
-   * later to ensure garbage collection.
-   * 
-   * @returns {void}
-   */
-  #connect_to_window() {
-    if (this.#window == null) return;
-
-    this.#send_window_data();
-    
-    const window_connections = map_get_or_else_set(
-      this.#connections,
-      this.#window,
-      () => new Set(),
-    );
-    
-    window_connections.add(
-      this.#window.connect("size-changed", () => this.#send_window_data()),
-    );
-  }
-
-  /**
-   * Connects to the position invalidated signal of the current cursor.
-   * 
-   * If there is not currently a cursor, this method early-exits.
-   * 
-   * The connection ids are stored in a map so that they may be disconnected
-   * later to ensure garbage collection.
-   * 
-   * @returns {void}
-   */
-  #connect_to_cursor() {
-    if (this.#cursor == null) return;
-
-    const cursor_connections = map_get_or_else_set(
-      this.#connections,
-      this.#cursor,
-      () => new Set(),
-    );
-
-    cursor_connections.add(
-      this.#cursor.connect("position-invalidated", () => this.#send_window_data()),
-    );
-  }
-
-  #disconnect_from_socket() {
-    try {
-      if (this.#socket == null) return Promise.resolve();
-
-      console.log(`${_PREFIX} Disconnecting from socket...`);
-
-      this.#socket.close();
-      this.#socket = null;
-
-      console.log(`${_PREFIX} Disconnected from socket.`);
-
-      return Promise.resolve();
-    } catch (error) {
-      return Promise.reject(error);
-    }
-  }
-
-  #disconnect_from_mutter() {
-    try {
-      console.log(`${_PREFIX} Disconnecting from mutter...`);
-
-      for (const [object, connections] of this.#connections) {
-        for (const connection of connections) {
-          object.disconnect(connection);
-        }
-        connections.clear();
-      }
-      this.#connections.clear();
-
-      console.log(`${_PREFIX} Disconnected from mutter.`);
-
-      return Promise.resolve();
-    } catch (error) {
-      return Promise.reject(error);
-    }
-  }
-
-  #disconnect_from_window() {
-    try {
-      if (this.#window == null) return Promise.resolve();
-
-      const window_connections = this.#connections.get(this.#window);
-
-      if (window_connections != null) {
-        for (const window_connection of window_connections) {
-          this.#window.disconnect(window_connection);
-        }
-
-        this.#connections.delete(this.#window);
-      }
-
-      return Promise.resolve();
-    } catch (error) {
-      return Promise.reject(error);
-    }
-  }
-
-  #disconnect_from_cursor() {
-    try {
-      if (this.#cursor == null) return Promise.resolve();
-
-      const cursor_connections = this.#connections.get(this.#cursor);
-    
-      if (cursor_connections != null) {
-        for (const cursor_connection of cursor_connections) {
-          this.#cursor.disconnect(cursor_connection);
-        }
-
-        this.#connections.delete(this.#cursor);
-      }
-
-      return Promise.resolve();
-    } catch (error) {
-      return Promise.reject(error);
-    }
-  }
-
-  #send_window_data() {
-    const wm_class = this.#window.get_wm_class();
-    const frame_rect = this.#window.get_frame_rect();
-
-    this.#socket.send(socket_encode("focusedWindowData", {
-      "id": wm_class,
-      "x": frame_rect.x,
-      "y": frame_rect.y,
-      "width": frame_rect.width,
-      "height": frame_rect.height,
-    }), null);
   }
 }
 
@@ -653,5 +744,25 @@ class Extension {
  * @returns {Extension}
  */
 function init() {
+  Extension = GObject.registerClass({
+    GTypeName: "FigExtension",
+    Properties: {
+      connected: GObject.ParamSpec.boolean(
+        "connected", "connected", "connected",
+        GObject.ParamFlags.READWRITE,
+        false),
+    },
+  }, Extension);
+
+  PanelIcon = GObject.registerClass({
+    GTypeName: "FigPanelIcon",
+    Properties: {
+      connected: GObject.ParamSpec.boolean(
+        "connected", "connected", "connected",
+        GObject.ParamFlags.READWRITE,
+        false),
+    },
+  }, PanelIcon);
+
   return new Extension();
 }

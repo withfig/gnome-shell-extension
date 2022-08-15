@@ -1,41 +1,5 @@
 
-///** @public @class */
-//export class Barrier {
-//  /** @private @property {Set<() => void>} */
-//  #resolves = new Set();
-//  /** @private @property {number} */
-//  #threshhold;
-//
-//  /** @public @property {number} */
-//  get threshold() { return this.#threshhold; }
-//
-//  /** @public @property {number} */
-//  set threshold(threshold) {
-//    this.#threshold = threshold;
-//    if (this.#resolves.size >= this.#threshhold) {
-//      this.#resolves.forEach((resolve) => resolve());
-//      this.#resolves.clear();
-//    }
-//  }
-//
-//  /** @public @constructor @param {number} threshold */
-//  constructor(threshold) {
-//    this.#threshhold = threshold;
-//  }
-//
-//  /** @public @async @method @returns {Promise<void>} */
-//  async wait() {
-//    if (this.#resolves.size + 1 >= this.#threshhold) {
-//      this.#resolves.forEach((resolve) => resolve());
-//      this.#resolves.clear();
-//      return;
-//    }
-//
-//    await new Promise((resolve) => {
-//      this.#resolves.add(resolve);
-//    });
-//  }
-//}
+import { env } from "node:process";
 
 /** @public @template T @class */
 export class Task {
@@ -60,7 +24,7 @@ export class TaskSet {
 
   /** @public @method @param {Task<any>} task @returns {void} */
   add(task) {
-    this.#tasks.add(task);
+    this.#tasks.add(task.wait());
   }
 
   /** @public @async @method @returns {Promise<void>} */

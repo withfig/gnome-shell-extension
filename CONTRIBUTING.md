@@ -19,3 +19,10 @@ properties correspond to files and folders in the extensions folder.
 TODO: Expand further here so that it is easy to continue maintaining this
 extension after my contract is over.
 -->
+
+# Quirk (bug) of Node
+
+The build scripts for this repo spawn a _shit_ ton of promises to do work in
+parallel, and for whatever reason, this causes node to have fatal errors when
+exceptions are raised in some promises. So, if you get a fatal exception, its
+probably this.

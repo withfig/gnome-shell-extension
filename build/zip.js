@@ -2,19 +2,14 @@
 import { Buffer } from "node:buffer";
 import { exec } from "node:child_process";
 import path from "node:path";
-import { cwd, env, getuid } from "node:process";
+import { cwd } from "node:process";
 import fs from "node:fs/promises";
 import { promisify } from "node:util";
 
 import { Task, TaskSet } from "./tasks.js";
+import { mktemp } from "./util.js";
 
-const run = (() => {
-  const aexec = promisify(exec);
-  return async (command) => {
-    return (await aexec(command)).stdout.trim();
-  };
-})();
-
+/** @public @class Zip */
 export class Zip {
   /** @static @public @property @type {unique symbol} */
   static write_to_intermittent_directory_as = Symbol("write_to_intermittent_directory_as");
@@ -26,17 +21,7 @@ export class Zip {
   add(name, member) { this.#root.add(name, member); return this; }
 
   async save(file) {
-    const directory = await (async () => {
-      if (env.XDG_RUNTIME_DIR != undefined) {
-        return await run(`mktemp --directory '${env.XDG_RUNTIME_DIR}/fig-gse-build-temp-XXXX'`);
-      }
-
-      try {
-        return await run(`mktemp --directory '/run/user/${getuid()}/fig-gse-build-temp-XXXX'`);
-      } catch {
-        return await run(`mktemp --directory 'fig-gse-build-temp-XXXX'`);
-      }
-    })();
+    const directory = await mktemp({ directory: true });
 
     await this.#root[Zip.write_to_intermittent_directory_as](directory);
 
@@ -46,10 +31,11 @@ export class Zip {
 
     try { await fs.rm(file); } catch { }
 
-    await run(`sh -c $'cd \\'${directory}\\' && zip \\'${file}\\' $(find -type f | sed \\'s/^.\\///g\\') && rm -rf \\'${directory}\\''`);
+    await (promisify(exec))(`sh -c $'cd \\'${directory}\\' && zip \\'${file}\\' $(find -type f | sed \\'s/^.\\///g\\') && rm -rf \\'${directory}\\''`);
   }
 }
 
+/** @public @class File */
 export class File {
   /** @private @property @type {string|Buffer} */
   #content;
@@ -75,6 +61,7 @@ export class File {
   }
 }
 
+/** @public @class Folder */
 export class Folder {
   /** @private @property @type {Map<string, File|Folder>} */
   #members = new Map();
