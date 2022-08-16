@@ -514,7 +514,7 @@ class Extension extends GObject.Object {
                             if (DEBUG)
                                 log_msg(`Encountered an error while connecting to socket (${ordinal(attempts)} try). Reason: ${error}`);
 
-                            GLib.timeout_add(GLib.PRIORITY_LOW, Math.max(1000 * attempts, 10000), () => {
+                            GLib.timeout_add(GLib.PRIORITY_LOW, 250, () => {
                                 attempt();
                                 return false;
                             });
