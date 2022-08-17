@@ -325,10 +325,14 @@ class Extension extends GObject.Object {
 
         this.#disconnect();
 
-        if (this.#sleep_source !== null && !this.#sleep_source.is_destroyed())
+        if (this.#sleep_source !== null && !this.#sleep_source.is_destroyed()) {
             this.#sleep_source.destroy();
-        if (this.#retry_source !== null && !this.#retry_source.is_destroyed())
+            this.#sleep_source = null;
+        }
+        if (this.#retry_source !== null && !this.#retry_source.is_destroyed()) {
             this.#retry_source.destroy();
+            this.#retry_source = null;
+        }
     }
 
     /**
