@@ -186,31 +186,6 @@ function ordinal(...numbers) {
 }
 
 /**
- * Returns a promise that will resolve after roughly the specified amount of
- * milliseconds.
- *
- * @private
- * @function
- * @param {number} millis
- * @returns {PromiseLike<void>}
- */
-function sleep(millis) {
-    let cancelled = false;
-    return cancellable(
-        new Promise(resolve => {
-            GLib.timeout_add(GLib.PRIORITY_LOW, millis, () => {
-                if (!cancelled)
-                    resolve();
-                return false;
-            });
-        }),
-        () => {
-            cancelled = true;
-        }
-    );
-}
-
-/**
  * The main class for managing the extensions state.
  */
 class Extension extends GObject.Object {
@@ -241,6 +216,10 @@ class Extension extends GObject.Object {
     #queue;
     /** @private @property @type {import("../types/.gobject").Object|null} */
     #window;
+    /** @private @property @type {import("../types/.glib").Source|null} */
+    #sleep_source;
+    /** @private @property @type {import("../types/.glib").Source|null} */
+    #retry_source;
 
     /**
    * Initializes the extension, without enabling it.
@@ -261,16 +240,18 @@ class Extension extends GObject.Object {
         this.#socket = null;
         this.#queue = new Queue();
         this.#window = null;
+        this.#sleep_source = null;
+        this.#retry_source = null;
     }
 
     /**
-   * Enables the extension, starting to connect to the Fig socket and mutter
-   * quietly in the background.
-   *
-   * @public @method @returns {void}
-   */
+     * Enables the extension, starting to connect to the Fig socket and mutter
+     * quietly in the background.
+     *
+     * @public @method @returns {void}
+     */
     enable() {
-    // Load and register resource files.
+        // Load and register resource files.
         this.#resources = Gio.Resource.load(`${Me.path}/resources/fig-gnome-integration.gresource`);
         Gio.resources_register(this.#resources);
 
@@ -318,15 +299,15 @@ class Extension extends GObject.Object {
     }
 
     /**
-   * Disables the extension. Note that this waits for the extension to finish
-   * becoming enabled if it is in the process of doing so. This prevents the
-   * extension from crashing if the user spams the extension enable/disable
-   * switch.
-   *
-   * @public @method @returns {void}
-   */
+     * Disables the extension. Note that this waits for the extension to finish
+     * becoming enabled if it is in the process of doing so. This prevents the
+     * extension from crashing if the user spams the extension enable/disable
+     * switch.
+     *
+     * @public @method @returns {void}
+     */
     disable() {
-    // Unregister the resource files.
+        // Unregister the resource files.
         Gio.resources_unregister(this.#resources);
         this.#resources = null;
 
@@ -343,11 +324,42 @@ class Extension extends GObject.Object {
         }
 
         this.#disconnect();
+
+        if (this.#sleep_source !== null && !this.#sleep_source.is_destroyed())
+            this.#sleep_source.destroy();
+        if (this.#retry_source !== null && !this.#retry_source.is_destroyed())
+            this.#retry_source.destroy();
     }
 
     /**
-   *
-   */
+     * Returns a promise that will resolve after roughly the specified amount of
+     * milliseconds.
+     *
+     * @private
+     * @function
+     * @param {number} millis
+     * @returns {PromiseLike<void>}
+     */
+    #sleep(millis) {
+        let cancelled = false;
+        return cancellable(
+            new Promise(resolve => {
+                const source = GLib.timeout_source_new(millis);
+                source.set_priority(GLib.PRIORITY_LOW);
+                source.set_callback(() => {
+                    if (!cancelled)
+                        resolve();
+                    return false;
+                });
+                source.attach(GLib.MainContext.default());
+                this.#sleep_source = source;
+            }),
+            () => {
+                cancelled = true;
+            }
+        );
+    }
+
     #connect() {
         if (this.#connecting)
             return;
@@ -356,7 +368,7 @@ class Extension extends GObject.Object {
         this.#disconnecting = false;
 
         this.#queue
-      .push(new Queue.Item(() => sleep(100)
+      .push(new Queue.Item(() => this.#sleep(100)
         .then(() => this.#connect_to_socket())
         .then(() => this.#connect_to_mutter())
         .then(() => {
@@ -514,10 +526,14 @@ class Extension extends GObject.Object {
                             if (DEBUG)
                                 log_msg(`Encountered an error while connecting to socket (${ordinal(attempts)} try). Reason: ${error}`);
 
-                            GLib.timeout_add(GLib.PRIORITY_LOW, 250, () => {
+                            const source = GLib.timeout_source_new(250);
+                            source.set_priority(GLib.PRIORITY_LOW);
+                            source.set_callback(() => {
                                 attempt();
                                 return false;
                             });
+                            source.attach(GLib.MainContext.default());
+                            this.#retry_source = source;
                         }
                     });
                 };
@@ -542,7 +558,7 @@ class Extension extends GObject.Object {
         this.#connecting = false;
 
         this.#queue
-      .push(new Queue.Item(() => sleep(100)
+      .push(new Queue.Item(() => this.#sleep(100)
         .then(() => this.#disconnect_from_objects())
         .then(() => this.#disconnect_from_socket())
         .then(() => {
