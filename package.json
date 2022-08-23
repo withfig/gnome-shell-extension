@@ -13,7 +13,9 @@
     "eslint": "^8.22.0"
   },
   "scripts": {
-    "build": "node ./build/all.js",
+    "all": "node ./build/all.js",
+    "build": "node ./build/extension.js",
+    "types": "node ./build/types.js",
     "clean": "rm ./types/.*.d.ts && rm *.zip"
   }
 }

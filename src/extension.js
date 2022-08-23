@@ -644,17 +644,33 @@ class Extension extends GObject.Object {
 
     #send_window_data(overlay_pressed) {
         const wm_class = this.#window.get_wm_class();
-        const frame_rect = this.#window.get_frame_rect();
+        const inner_rect = this.#window.get_frame_rect();
+        const outer_rect = this.#window.get_buffer_rect();
+        const scale = global.display.get_monitor_scale(this.#window.get_monitor());
+
+        if (DEBUG) {
+            log_msg(`Sending data for rect inner ${inner_rect.x},${inner_rect.y},${inner_rect.width},${inner_rect.height}` +
+                    ` outer ${outer_rect.x},${outer_rect.y},${outer_rect.width},${outer_rect.height} with scale ${scale}`);
+        }
 
         try {
             this.#socket.send(socket_encode('focusedWindowData', {
                 'source': 'gse',
                 'id': wm_class,
-                'x': frame_rect.x,
-                'y': frame_rect.y,
-                'width': frame_rect.width,
-                'height': frame_rect.height,
+                'inner': {
+                    'x': inner_rect.x,
+                    'y': inner_rect.y,
+                    'width': inner_rect.width,
+                    'height': inner_rect.height,
+                },
+                'outer': {
+                    'x': outer_rect.x,
+                    'y': outer_rect.y,
+                    'width': outer_rect.width,
+                    'height': outer_rect.height,
+                },
                 'hide': overlay_pressed,
+                scale,
             }), null);
         } catch (error) {
             log_msg('Failed to send a message to the socket, disconnecting.');
