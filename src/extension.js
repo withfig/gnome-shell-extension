@@ -349,13 +349,12 @@ class Extension extends GObject.Object {
         return cancellable(
             new Promise(resolve => {
                 const source = GLib.timeout_source_new(millis);
-                source.set_priority(GLib.PRIORITY_LOW);
                 source.set_callback(() => {
                     if (!cancelled)
                         resolve();
                     return false;
                 });
-                source.attach(GLib.MainContext.default());
+                source.attach(null);
                 this.#sleep_source = source;
             }),
             () => {
@@ -555,19 +554,21 @@ class Extension extends GObject.Object {
     }
 
     #disconnect() {
-        if (this.#disconnecting)
+        if (this.#disconnecting) {
+            log_msg('Ignoring disconnect call since already disconnecting');
             return;
+        }
 
         this.#disconnecting = true;
         this.#connecting = false;
 
         this.#queue
-      .push(new Queue.Item(() => this.#sleep(100)
-        .then(() => this.#disconnect_from_objects())
-        .then(() => this.#disconnect_from_socket())
-        .then(() => {
-            this.#disconnecting = false;
-        })));
+            .push(new Queue.Item(() => this.#sleep(100)
+                .then(() => this.#disconnect_from_objects())
+                .then(() => this.#disconnect_from_socket())
+                .then(() => {
+                    this.#disconnecting = false;
+                })));
     }
 
     /**
