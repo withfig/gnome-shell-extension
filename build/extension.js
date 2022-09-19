@@ -88,7 +88,7 @@ for await (const entry of await fs.opendir("./src")) {
               })();
 
               const bundled = await (async () => {
-                let bundled = "const DEBUG=false;\n";
+                let bundled = "const DEBUG=true;\n";
                 bundled += source;
                 bundled = bundled.replaceAll(
                   /this.#([a-zA-Z_\$][a-zA-Z0-9_\$]*)/g,
@@ -124,7 +124,7 @@ for await (const entry of await fs.opendir("./src")) {
               })();
 
               const bundled = await (async () => {
-                let bundled = "const DEBUG=true;\n";
+                let bundled = "const DEBUG=false;\n";
                 bundled += source;
                 bundled = bundled.replaceAll(
                   /this.#([a-zA-Z_\$][a-zA-Z0-9_\$]*)/g,
