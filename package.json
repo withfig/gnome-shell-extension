@@ -1,7 +1,7 @@
 {
   "name": "fig-gnome-integration",
   "author": "The Fig Team",
-  "version": "1.0.1",
+  "version": "1.0.0",
   "description": "Tightly integrates Fig with GNOME shell",
   "repository": "git@github.com/withfig/gnome-shell-extenstion",
   "license": "MIT",
