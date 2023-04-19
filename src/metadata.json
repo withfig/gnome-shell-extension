@@ -6,5 +6,5 @@
   "description": "Tightly integrates Fig with GNOME shell",
   "gettext-domain": "fig-gnome-integration",
   "settings-schema": "org.gnome.shell.extensions.fig-gnome-integration",
-  "shell-version": ["41", "42", "43"]
+  "shell-version": ["41", "42", "43", "44"]
 }
