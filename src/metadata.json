@@ -2,7 +2,7 @@
   "uuid": "fig-gnome-integration@fig.io",
   "name": "Fig GNOME Integration",
   "url": "https://github.com/withfig/gnome-shell-extension",
-  "version": 6,
+  "version": 7,
   "description": "Tightly integrates Fig with GNOME shell",
   "gettext-domain": "fig-gnome-integration",
   "settings-schema": "org.gnome.shell.extensions.fig-gnome-integration",
